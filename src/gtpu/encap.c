@@ -37,6 +37,7 @@ enum msg_type {
 static void gtp5g_encap_disable_locked(struct sock *);
 static int gtp5g_encap_recv(struct sock *, struct sk_buff *);
 static int gtp1u_udp_encap_recv(struct gtp5g_dev *, struct sk_buff *);
+static int gtp1c_handle_error_indication(struct sk_buff *, struct gtp5g_dev *, u32);
 static int gtp5g_rx(struct pdr *, struct sk_buff *, unsigned int, unsigned int);
 static int gtp5g_fwd_skb_encap(struct sk_buff *, struct net_device *,
         unsigned int, struct pdr *, struct far *);
@@ -242,6 +243,83 @@ static int gtp1c_handle_echo_req(struct sk_buff *skb, struct gtp5g_dev *gtp)
     return PKT_FORWARDED;
 }
 
+static int gtp1c_handle_error_indication(struct sk_buff *skb,
+    struct gtp5g_dev *gtp, u32 teid)
+{
+    struct gtpv1_error_indication *gtp_pkt;
+
+    struct rtable *rt;
+    struct flowi4 fl4;
+    struct iphdr *iph;
+    struct udphdr *udph;
+
+    __be32 orig_teid;
+    __be32 orig_saddr;
+
+    /* Save values from the incoming packet before we modify the skb */
+    iph = ip_hdr(skb);
+    udph = udp_hdr(skb);
+    orig_teid = teid;
+    orig_saddr = iph->daddr; /* gNB's own address (sender of Error Indication) */
+
+    /* Clear packet data and build the Error Indication response */
+    pskb_pull(skb, skb->len);
+
+    gtp_pkt = skb_push(skb, sizeof(struct gtpv1_error_indication));
+    if (!gtp_pkt) {
+        GTP5G_ERR(gtp->dev, "can not construct GTP Error Indication\n");
+        return PKT_DROPPED;
+    }
+    memset(gtp_pkt, 0, sizeof(struct gtpv1_error_indication));
+
+    /* GTP header */
+    gtp_pkt->gtpv1_h.flags = GTPV1 | GTPV1_HDR_FLG_SEQ;
+    gtp_pkt->gtpv1_h.type = GTPV1_MSG_TYPE_ERROR_IND;
+    gtp_pkt->gtpv1_h.length =
+        htons(sizeof(struct gtpv1_error_indication) - sizeof(struct gtpv1_hdr));
+    gtp_pkt->gtpv1_h.tid = 0;
+
+    /* GTP optional header */
+    gtp_pkt->gtpv1_opt_h.seq_number = 0;
+
+    /* Tunnel Endpoint Identifier Data I IE */
+    gtp_pkt->teid_ie.type = GTPV1_IE_TEID_DATA_I;
+    gtp_pkt->teid_ie.teid = orig_teid;
+
+    /* GTP-U Peer Address IE */
+    gtp_pkt->peer_addr_ie.type = GTPV1_IE_GTPU_PEER_ADDR;
+    gtp_pkt->peer_addr_ie.length = htons(4);
+    gtp_pkt->peer_addr_ie.addr = orig_saddr;
+
+    /* Route back with swapped src/dst */
+    rt = ip4_find_route(skb, iph, gtp->sk1u, gtp->dev,
+        iph->daddr,
+        iph->saddr,
+        &fl4);
+    if (IS_ERR(rt)) {
+        GTP5G_ERR(gtp->dev, "no route for GTP Error Indication to %pI4\n",
+            &iph->saddr);
+        return PKT_DROPPED;
+    }
+
+    udp_tunnel_xmit_skb(rt, gtp->sk1u, skb,
+                    fl4.saddr, fl4.daddr,
+                    iph->tos,
+                    ip4_dst_hoplimit(&rt->dst),
+                    0,
+                    udph->dest, udph->source,
+                    !net_eq(sock_net(gtp->sk1u),
+                        dev_net(gtp->dev)),
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,17,0)
+                    false,
+                    0);
+#else
+                    false);
+#endif
+
+    return PKT_FORWARDED;
+}
+
 static int gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
 {
     unsigned int hdrlen = sizeof(struct udphdr) + sizeof(struct gtpv1_hdr);
@@ -348,7 +426,11 @@ static int gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
     pdr = pdr_find_by_gtp1u(gtp, skb, hdrlen, teid, gtp_type);
     if (!pdr) {
         GTP5G_ERR(gtp->dev, "No PDR match this skb : teid[%x]\n", ntohl(teid));
-        rt = PKT_DROPPED;
+        if (teid != 0) {
+            rt = gtp1c_handle_error_indication(skb, gtp, teid);
+        } else {
+            rt = PKT_DROPPED;
+        }
         goto end;
     }
 

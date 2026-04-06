@@ -52,12 +52,34 @@ struct gtpv1_echo_resp {
 
 #define GTP1U_PORT  2152
 
-#define GTPV1_MSG_TYPE_ECHO_REQ  1
-#define GTPV1_MSG_TYPE_ECHO_RSP  2
+#define GTPV1_MSG_TYPE_ECHO_REQ    1
+#define GTPV1_MSG_TYPE_ECHO_RSP    2
+#define GTPV1_MSG_TYPE_ERROR_IND  26
 #define GTPV1_MSG_TYPE_EMARK     254
 #define GTPV1_MSG_TYPE_TPDU      255
 
-#define GTPV1_IE_RECOVERY  14
+#define GTPV1_IE_RECOVERY       14
+#define GTPV1_IE_TEID_DATA_I    16   /* TV: 1 byte type + 4 bytes TEID */
+#define GTPV1_IE_GTPU_PEER_ADDR 133  /* TLV: 1 byte type + 2 bytes len + 4 bytes IPv4 addr */
+
+struct gtpv1_ie_teid_data_i {
+    __u8    type;    /* = 16 */
+    __be32  teid;    /* TEID from received packet */
+} __attribute__((packed));
+
+struct gtpv1_ie_peer_addr {
+    __u8    type;    /* = 133 */
+    __be16  length;  /* = 4 for IPv4 */
+    __be32  addr;    /* IPv4 address of the peer */
+} __attribute__((packed));
+
+struct gtpv1_error_indication {
+    struct gtpv1_hdr            gtpv1_h;       /* 8 bytes */
+    struct gtp1_hdr_opt         gtpv1_opt_h;   /* 4 bytes (S flag set) */
+    struct gtpv1_ie_teid_data_i teid_ie;       /* 5 bytes */
+    struct gtpv1_ie_peer_addr   peer_addr_ie;  /* 7 bytes */
+} __attribute__((packed));
+/* Total: 24 bytes. GTP length field = 24 - 8 = 16 */
 
 typedef struct ul_pdu_sess_info {
         __u8    spare_qfi;                      /* Spare(2b) + qfi(6b)*/
