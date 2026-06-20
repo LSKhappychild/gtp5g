@@ -39,10 +39,17 @@ static void pdr_context_free(struct rcu_head *head)
     if (!pdr)
         return;
 
-    sock_put(pdr->sk);
+    if (pdr->sk)
+        sock_put(pdr->sk);
 
     if (pdr->outer_header_removal)
         kfree(pdr->outer_header_removal);
+    if (pdr->far_id)
+        kfree(pdr->far_id);
+    if (pdr->qer_ids)
+        kfree(pdr->qer_ids);
+    if (pdr->urr_ids)
+        kfree(pdr->urr_ids);
 
     pdi = pdr->pdi;
     if (pdi) {
@@ -50,12 +57,6 @@ static void pdr_context_free(struct rcu_head *head)
             kfree(pdi->ue_addr_ipv4);
         if (pdi->f_teid)
             kfree(pdi->f_teid);
-        if (pdr->far_id)
-            kfree(pdr->far_id);
-        if (pdr->qer_ids)
-            kfree(pdr->qer_ids);
-        if (pdr->urr_ids)
-            kfree(pdr->urr_ids);
 
         sdf = pdi->sdf;
         if (sdf) {

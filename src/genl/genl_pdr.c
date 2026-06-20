@@ -33,6 +33,7 @@ static int gtp5g_genl_fill_pdr(struct sk_buff *, u32, u32, u32, struct pdr *);
 int gtp5g_genl_add_pdr(struct sk_buff *skb, struct genl_info *info)
 {
     struct gtp5g_dev *gtp;
+    struct sock *sk1u;
     struct pdr *pdr;
     int ifindex;
     int netnsfd;
@@ -57,6 +58,13 @@ int gtp5g_genl_add_pdr(struct sk_buff *skb, struct genl_info *info)
 
     gtp = gtp5g_find_dev(sock_net(skb->sk), ifindex, netnsfd);
     if (!gtp) {
+        rcu_read_unlock();
+        rtnl_unlock();
+        return -ENODEV;
+    }
+
+    sk1u = gtp->sk1u;
+    if (!sk1u) {
         rcu_read_unlock();
         rtnl_unlock();
         return -ENODEV;
@@ -90,6 +98,8 @@ int gtp5g_genl_add_pdr(struct sk_buff *skb, struct genl_info *info)
         err = pdr_fill(pdr, gtp, info);
         if (err) {
             pdr_context_delete(pdr);
+            rcu_read_unlock();
+            rtnl_unlock();
             return err;
         }
 
@@ -124,8 +134,8 @@ int gtp5g_genl_add_pdr(struct sk_buff *skb, struct genl_info *info)
         return -ENOMEM;
     }
 
-    sock_hold(gtp->sk1u);
-    pdr->sk = gtp->sk1u;
+    sock_hold(sk1u);
+    pdr->sk = sk1u;
     pdr->dev = gtp->dev;
 
     err = pdr_fill(pdr, gtp, info);
@@ -408,6 +418,9 @@ static int pdr_fill(struct pdr *pdr, struct gtp5g_dev *gtp, struct genl_info *in
     struct qer *qer;
     int i;
 
+    if (!pdr || !gtp)
+        return -EINVAL;
+
     pdr->seid = 0;
     pdr->ul_dl_gate = 0;
 
@@ -468,7 +481,7 @@ static int pdr_fill(struct pdr *pdr, struct gtp5g_dev *gtp, struct genl_info *in
         hdr = nla_next(hdr, &remaining);
     }
     
-    if (!pdr)
+    if (!pdr->far_id)
         return -EINVAL;
 
     pdr->af = AF_INET;
