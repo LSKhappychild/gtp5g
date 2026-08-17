@@ -252,6 +252,19 @@ err1:
 
 void gtp5g_hashtable_free(struct gtp5g_dev *gtp)
 {
+    struct hlist_head *addr_hash;
+    struct hlist_head *i_teid_hash;
+    struct hlist_head *pdr_id_hash;
+    struct hlist_head *far_id_hash;
+    struct hlist_head *qer_id_hash;
+    struct hlist_head *bar_id_hash;
+    struct hlist_head *urr_id_hash;
+    struct hlist_head *related_far_hash;
+    struct hlist_head *related_qer_hash;
+    struct hlist_head *related_bar_hash;
+    struct hlist_head *related_urr_hash;
+    unsigned int hash_size;
+    struct hlist_node *tmp;
     struct pdr *pdr;
     struct far *far;
     struct qer *qer;
@@ -259,29 +272,61 @@ void gtp5g_hashtable_free(struct gtp5g_dev *gtp)
     struct urr *urr;
     int i;
 
-    for (i = 0; i < gtp->hash_size; i++) {
-        hlist_for_each_entry_rcu(far, &gtp->far_id_hash[i], hlist_id)
+    if (!gtp)
+        return;
+
+    hash_size = READ_ONCE(gtp->hash_size);
+    if (!hash_size)
+        return;
+
+    addr_hash = READ_ONCE(gtp->addr_hash);
+    i_teid_hash = READ_ONCE(gtp->i_teid_hash);
+    pdr_id_hash = READ_ONCE(gtp->pdr_id_hash);
+    far_id_hash = READ_ONCE(gtp->far_id_hash);
+    qer_id_hash = READ_ONCE(gtp->qer_id_hash);
+    bar_id_hash = READ_ONCE(gtp->bar_id_hash);
+    urr_id_hash = READ_ONCE(gtp->urr_id_hash);
+    related_far_hash = READ_ONCE(gtp->related_far_hash);
+    related_qer_hash = READ_ONCE(gtp->related_qer_hash);
+    related_bar_hash = READ_ONCE(gtp->related_bar_hash);
+    related_urr_hash = READ_ONCE(gtp->related_urr_hash);
+
+    for (i = 0; i < hash_size; i++) {
+        hlist_for_each_entry_safe(far, tmp, &far_id_hash[i], hlist_id)
             far_context_delete(far);
-        hlist_for_each_entry_rcu(qer, &gtp->qer_id_hash[i], hlist_id)
+        hlist_for_each_entry_safe(qer, tmp, &qer_id_hash[i], hlist_id)
             qer_context_delete(qer);
-        hlist_for_each_entry_rcu(pdr, &gtp->pdr_id_hash[i], hlist_id)
+        hlist_for_each_entry_safe(pdr, tmp, &pdr_id_hash[i], hlist_id)
             pdr_context_delete(pdr);
-        hlist_for_each_entry_rcu(bar, &gtp->bar_id_hash[i], hlist_id)
+        hlist_for_each_entry_safe(bar, tmp, &bar_id_hash[i], hlist_id)
             bar_context_delete(bar);
-        hlist_for_each_entry_rcu(urr, &gtp->urr_id_hash[i], hlist_id)
+        hlist_for_each_entry_safe(urr, tmp, &urr_id_hash[i], hlist_id)
             urr_context_delete(urr);
     }
 
+    WRITE_ONCE(gtp->hash_size, 0);
+    WRITE_ONCE(gtp->addr_hash, NULL);
+    WRITE_ONCE(gtp->i_teid_hash, NULL);
+    WRITE_ONCE(gtp->pdr_id_hash, NULL);
+    WRITE_ONCE(gtp->far_id_hash, NULL);
+    WRITE_ONCE(gtp->qer_id_hash, NULL);
+    WRITE_ONCE(gtp->bar_id_hash, NULL);
+    WRITE_ONCE(gtp->urr_id_hash, NULL);
+    WRITE_ONCE(gtp->related_far_hash, NULL);
+    WRITE_ONCE(gtp->related_qer_hash, NULL);
+    WRITE_ONCE(gtp->related_bar_hash, NULL);
+    WRITE_ONCE(gtp->related_urr_hash, NULL);
+
     synchronize_rcu();
-    kvfree(gtp->addr_hash);
-    kvfree(gtp->i_teid_hash);
-    kvfree(gtp->pdr_id_hash);
-    kvfree(gtp->far_id_hash);
-    kvfree(gtp->qer_id_hash);
-    kvfree(gtp->bar_id_hash);
-    kvfree(gtp->urr_id_hash);
-    kvfree(gtp->related_far_hash);
-    kvfree(gtp->related_qer_hash);
-    kvfree(gtp->related_bar_hash);
-    kvfree(gtp->related_urr_hash);
+    kvfree(addr_hash);
+    kvfree(i_teid_hash);
+    kvfree(pdr_id_hash);
+    kvfree(far_id_hash);
+    kvfree(qer_id_hash);
+    kvfree(bar_id_hash);
+    kvfree(urr_id_hash);
+    kvfree(related_far_hash);
+    kvfree(related_qer_hash);
+    kvfree(related_bar_hash);
+    kvfree(related_urr_hash);
 }

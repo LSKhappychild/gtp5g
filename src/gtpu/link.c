@@ -140,9 +140,16 @@ static void gtp5g_dellink(struct net_device *dev, struct list_head *head)
 {
     struct gtp5g_dev *gtp = netdev_priv(dev);
 
-    gtp5g_hashtable_free(gtp);
+    if (gtp->sk1u) {
+        gtp5g_encap_disable(gtp->sk1u);
+        synchronize_net();
+    }
+
     list_del_rcu(&gtp->list);
     list_del_rcu(&gtp->proc_list);
+    synchronize_rcu();
+
+    gtp5g_hashtable_free(gtp);
     unregister_netdevice_queue(dev, head);
 
     GTP5G_LOG(dev, "De-registered 5G GTP interface\n");
@@ -181,11 +188,11 @@ struct rtnl_link_ops gtp5g_link_ops __read_mostly = {
 
 void gtp5g_link_all_del(struct list_head *dev_list)
 {
-    struct gtp5g_dev *gtp;
+    struct gtp5g_dev *gtp, *tmp;
     LIST_HEAD(list);
 
     rtnl_lock();
-    list_for_each_entry(gtp, dev_list, list)
+    list_for_each_entry_safe(gtp, tmp, dev_list, list)
         gtp5g_dellink(gtp->dev, &list);
 
     unregister_netdevice_many(&list);

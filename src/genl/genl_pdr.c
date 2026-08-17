@@ -290,6 +290,8 @@ int gtp5g_genl_dump_pdr(struct sk_buff *skb, struct netlink_callback *cb)
     int ret;
     u16 pdr_id = cb->args[2];
     struct pdr *pdr;
+    unsigned int hash_size;
+    struct hlist_head *pdr_id_hash;
 
     if (cb->args[5])
         return 0;
@@ -300,8 +302,13 @@ int gtp5g_genl_dump_pdr(struct sk_buff *skb, struct netlink_callback *cb)
         else
             last_gtp = NULL;
 
-        for (i = last_hash_entry_id; i < gtp->hash_size; i++) {
-            hlist_for_each_entry_rcu(pdr, &gtp->pdr_id_hash[i], hlist_id) {
+        hash_size = READ_ONCE(gtp->hash_size);
+        pdr_id_hash = READ_ONCE(gtp->pdr_id_hash);
+        if (!hash_size || !pdr_id_hash || last_hash_entry_id >= hash_size)
+            continue;
+
+        for (i = last_hash_entry_id; i < hash_size; i++) {
+            hlist_for_each_entry_rcu(pdr, &pdr_id_hash[i], hlist_id) {
                 if (pdr_id && pdr_id != pdr->id)
                     continue;
                 else

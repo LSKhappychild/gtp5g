@@ -47,4 +47,19 @@ int dev_hashtable_new(struct gtp5g_dev *, int);
 void gtp5g_hashtable_free(struct gtp5g_dev *);
 void update_usage_statistic(struct gtp5g_dev *, u64, u64, int, uint);
 
+static inline struct hlist_head *gtp5g_hash_get(struct gtp5g_dev *gtp,
+        struct hlist_head *table, u32 hash)
+{
+    unsigned int hash_size;
+
+    if (!gtp || !table)
+        return NULL;
+
+    hash_size = READ_ONCE(gtp->hash_size);
+    if (!hash_size)
+        return NULL;
+
+    return &table[hash % hash_size];
+}
+
 #endif // __GTP5G_DEV_H__

@@ -283,6 +283,8 @@ int gtp5g_genl_dump_urr(struct sk_buff *skb, struct netlink_callback *cb)
     int ret;
     u32 urr_id = cb->args[2];
     struct urr *urr;
+    unsigned int hash_size;
+    struct hlist_head *urr_id_hash;
 
     if (cb->args[5])
         return 0;
@@ -293,8 +295,13 @@ int gtp5g_genl_dump_urr(struct sk_buff *skb, struct netlink_callback *cb)
         else
             last_gtp = NULL;
 
-        for (i = last_hash_entry_id; i < gtp->hash_size; i++) {
-            hlist_for_each_entry_rcu(urr, &gtp->urr_id_hash[i], hlist_id) {
+        hash_size = READ_ONCE(gtp->hash_size);
+        urr_id_hash = READ_ONCE(gtp->urr_id_hash);
+        if (!hash_size || !urr_id_hash || last_hash_entry_id >= hash_size)
+            continue;
+
+        for (i = last_hash_entry_id; i < hash_size; i++) {
+            hlist_for_each_entry_rcu(urr, &urr_id_hash[i], hlist_id) {
                 if (urr_id && urr_id != urr->id)
                     continue;
                 urr_id = 0;

@@ -293,6 +293,8 @@ int gtp5g_genl_dump_far(struct sk_buff *skb, struct netlink_callback *cb)
     int ret;
     u32 far_id = cb->args[2];
     struct far *far;
+    unsigned int hash_size;
+    struct hlist_head *far_id_hash;
 
     if (cb->args[5])
         return 0;
@@ -303,8 +305,13 @@ int gtp5g_genl_dump_far(struct sk_buff *skb, struct netlink_callback *cb)
         else
             last_gtp = NULL;
 
-        for (i = last_hash_entry_id; i < gtp->hash_size; i++) {
-            hlist_for_each_entry_rcu(far, &gtp->far_id_hash[i], hlist_id) {
+        hash_size = READ_ONCE(gtp->hash_size);
+        far_id_hash = READ_ONCE(gtp->far_id_hash);
+        if (!hash_size || !far_id_hash || last_hash_entry_id >= hash_size)
+            continue;
+
+        for (i = last_hash_entry_id; i < hash_size; i++) {
+            hlist_for_each_entry_rcu(far, &far_id_hash[i], hlist_id) {
                 if (far_id && far_id != far->id)
                     continue;
                 else

@@ -259,6 +259,8 @@ int gtp5g_genl_dump_qer(struct sk_buff *skb, struct netlink_callback *cb)
     int ret;
     u32 qer_id = cb->args[2];
     struct qer *qer;
+    unsigned int hash_size;
+    struct hlist_head *qer_id_hash;
 
     if (cb->args[5])
         return 0;
@@ -269,8 +271,13 @@ int gtp5g_genl_dump_qer(struct sk_buff *skb, struct netlink_callback *cb)
         else
             last_gtp = NULL;
 
-        for (i = last_hash_entry_id; i < gtp->hash_size; i++) {
-            hlist_for_each_entry_rcu(qer, &gtp->qer_id_hash[i], hlist_id) {
+        hash_size = READ_ONCE(gtp->hash_size);
+        qer_id_hash = READ_ONCE(gtp->qer_id_hash);
+        if (!hash_size || !qer_id_hash || last_hash_entry_id >= hash_size)
+            continue;
+
+        for (i = last_hash_entry_id; i < hash_size; i++) {
+            hlist_for_each_entry_rcu(qer, &qer_id_hash[i], hlist_id) {
                 if (qer_id && qer_id != qer->id)
                     continue;
                 qer_id = 0;

@@ -36,11 +36,14 @@ void urr_context_delete(struct urr *urr)
         hlist_del_rcu(&urr->hlist_id);
 
     seid_urr_id_to_hex_str(urr->seid, urr->id, seid_urr_id_hexstr);
-    head = &gtp->related_urr_hash[str_hashfn(seid_urr_id_hexstr) % gtp->hash_size];
-    hlist_for_each_entry_rcu(pdr_node, head, hlist) {
-        if (pdr_node->pdr != NULL &&
-            find_urr_id_in_pdr(pdr_node->pdr, urr->id)) {
-            unix_sock_client_delete(pdr_node->pdr);
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_urr_hash),
+            str_hashfn(seid_urr_id_hexstr));
+    if (head) {
+        hlist_for_each_entry_rcu(pdr_node, head, hlist) {
+            if (pdr_node->pdr != NULL &&
+                find_urr_id_in_pdr(pdr_node->pdr, urr->id)) {
+                unix_sock_client_delete(pdr_node->pdr);
+            }
         }
     }
 
@@ -53,8 +56,15 @@ struct urr *find_urr_by_id(struct gtp5g_dev *gtp, u64 seid, u32 urr_id)
     struct urr *urr;
     char seid_urr_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
 
+    if (!gtp)
+        return NULL;
+
     seid_urr_id_to_hex_str(seid, urr_id, seid_urr_id_hexstr);
-    head = &gtp->urr_id_hash[str_hashfn(seid_urr_id_hexstr) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->urr_id_hash),
+            str_hashfn(seid_urr_id_hexstr));
+    if (!head)
+        return NULL;
+
     hlist_for_each_entry_rcu(urr, head, hlist_id) {
         if (urr->seid == seid && urr->id == urr_id)
             return urr;
@@ -70,7 +80,11 @@ void urr_update(struct urr *urr, struct gtp5g_dev *gtp)
     char seid_urr_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
 
     seid_urr_id_to_hex_str(urr->seid, urr->id, seid_urr_id_hexstr);
-    head = &gtp->related_urr_hash[str_hashfn(seid_urr_id_hexstr) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_urr_hash),
+            str_hashfn(seid_urr_id_hexstr));
+    if (!head)
+        return;
+
     hlist_for_each_entry_rcu(pdr_node, head, hlist) {
         if (pdr_node->pdr != NULL &&
             find_urr_id_in_pdr(pdr_node->pdr, urr->id)) {
@@ -102,7 +116,11 @@ void urr_quota_exhaust_action(struct urr *urr, struct gtp5g_dev *gtp)
         goto fail;
 
     seid_urr_id_to_hex_str(urr->seid, urr->id, seid_urr_id_hexstr);
-    head = &gtp->related_urr_hash[str_hashfn(seid_urr_id_hexstr) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_urr_hash),
+            str_hashfn(seid_urr_id_hexstr));
+    if (!head)
+        goto fail;
+
     //each pdr that associate with the urr drop pkt
     hlist_for_each_entry_rcu(pdr_node, head, hlist) {
         if (find_urr_id_in_pdr(pdr_node->pdr, urr->id)) {
@@ -148,7 +166,10 @@ void urr_reverse_quota_exhaust_action(struct urr *urr, struct gtp5g_dev *gtp)
     }
 
     seid_urr_id_to_hex_str(urr->seid, urr->id, seid_urr_id_hexstr);
-    head = &gtp->related_urr_hash[str_hashfn(seid_urr_id_hexstr) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_urr_hash),
+            str_hashfn(seid_urr_id_hexstr));
+    if (!head)
+        return;
 
     //each pdr that associate with the urr resume it's normal action
     hlist_for_each_entry_rcu(pdr_node, head, hlist) {
@@ -175,11 +196,15 @@ void urr_reverse_quota_exhaust_action(struct urr *urr, struct gtp5g_dev *gtp)
 void urr_append(u64 seid, u32 urr_id, struct urr *urr, struct gtp5g_dev *gtp)
 {
     char seid_urr_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
-    u32 i;
+    struct hlist_head *head;
 
     seid_urr_id_to_hex_str(seid, urr_id, seid_urr_id_hexstr);
-    i = str_hashfn(seid_urr_id_hexstr) % gtp->hash_size;
-    hlist_add_head_rcu(&urr->hlist_id, &gtp->urr_id_hash[i]);
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->urr_id_hash),
+            str_hashfn(seid_urr_id_hexstr));
+    if (!head)
+        return;
+
+    hlist_add_head_rcu(&urr->hlist_id, head);
 }
 
 int urr_get_pdr_ids(u16 *ids, int n, struct urr *urr, struct gtp5g_dev *gtp)
@@ -190,7 +215,11 @@ int urr_get_pdr_ids(u16 *ids, int n, struct urr *urr, struct gtp5g_dev *gtp)
     int i;
 
     seid_urr_id_to_hex_str(urr->seid, urr->id, seid_urr_id_hexstr);
-    head = &gtp->related_urr_hash[str_hashfn(seid_urr_id_hexstr) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_urr_hash),
+            str_hashfn(seid_urr_id_hexstr));
+    if (!head)
+        return 0;
+
     i = 0;
     hlist_for_each_entry_rcu(pdr_node, head, hlist) {
         if (i >= n)
@@ -204,16 +233,24 @@ int urr_get_pdr_ids(u16 *ids, int n, struct urr *urr, struct gtp5g_dev *gtp)
 
 void del_related_urr_hash(struct gtp5g_dev *gtp, struct pdr *pdr)
 {
-    u32 i, j;
+    u32 j;
+    struct hlist_head *head;
     struct pdr_node *pdr_node = NULL ;
     struct pdr_node *to_be_del = NULL ;
     char seid_urr_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
 
+    if (!pdr)
+        return;
+
     for (j = 0; j < pdr->urr_num; j++) {
         to_be_del = NULL;
         seid_urr_id_to_hex_str(pdr->seid, pdr->urr_ids[j], seid_urr_id_hexstr);
-        i = str_hashfn(seid_urr_id_hexstr) % gtp->hash_size;
-        hlist_for_each_entry_rcu(pdr_node, &gtp->related_urr_hash[i], hlist) {
+        head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_urr_hash),
+                str_hashfn(seid_urr_id_hexstr));
+        if (!head)
+            return;
+
+        hlist_for_each_entry_rcu(pdr_node, head, hlist) {
             if (pdr_node->pdr != NULL &&
                 pdr_node->pdr->seid == pdr->seid &&
                 pdr_node->pdr->id == pdr->id) {
@@ -231,8 +268,9 @@ void del_related_urr_hash(struct gtp5g_dev *gtp, struct pdr *pdr)
 int urr_set_pdr(struct pdr *pdr, struct gtp5g_dev *gtp)
 {
     char seid_urr_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
-    u32 i, j;
+    u32 j;
     struct pdr_node *pdr_node = NULL;
+    struct hlist_head *head;
 
     if (!pdr)
         return -1;
@@ -242,14 +280,17 @@ int urr_set_pdr(struct pdr *pdr, struct gtp5g_dev *gtp)
 
     for (j = 0; j < pdr->urr_num; j++) {
         seid_urr_id_to_hex_str(pdr->seid, pdr->urr_ids[j], seid_urr_id_hexstr);
-        i = str_hashfn(seid_urr_id_hexstr) % gtp->hash_size;
+        head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_urr_hash),
+                str_hashfn(seid_urr_id_hexstr));
+        if (!head)
+            return -ENODEV;
 
         pdr_node = kzalloc(sizeof(*pdr_node), GFP_ATOMIC);
         if (!pdr_node) {
             return -ENOMEM;
         }
         pdr_node->pdr = pdr;
-        hlist_add_head_rcu(&pdr_node->hlist, &gtp->related_urr_hash[i]);
+        hlist_add_head_rcu(&pdr_node->hlist, head);
     }
     return 0;
 }

@@ -35,10 +35,13 @@ void bar_context_delete(struct bar *bar)
         hlist_del_rcu(&bar->hlist_id);
 
     seid_bar_id_to_hex_str(bar->seid, bar->id, seid_bar_id_hexstr);
-    head = &gtp->related_bar_hash[str_hashfn(seid_bar_id_hexstr) % gtp->hash_size];
-    hlist_for_each_entry_rcu(far, head, hlist_related_bar) {
-        if (*far->bar_id == bar->id) {
-            far->bar = NULL;
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_bar_hash),
+            str_hashfn(seid_bar_id_hexstr));
+    if (head) {
+        hlist_for_each_entry_rcu(far, head, hlist_related_bar) {
+            if (*far->bar_id == bar->id) {
+                far->bar = NULL;
+            }
         }
     }
 
@@ -51,8 +54,15 @@ struct bar *find_bar_by_id(struct gtp5g_dev *gtp, u64 seid, u32 bar_id)
     struct bar *bar;
     char seid_bar_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
 
+    if (!gtp)
+        return NULL;
+
     seid_bar_id_to_hex_str(seid, bar_id, seid_bar_id_hexstr);
-    head = &gtp->bar_id_hash[str_hashfn(seid_bar_id_hexstr) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->bar_id_hash),
+            str_hashfn(seid_bar_id_hexstr));
+    if (!head)
+        return NULL;
+
     hlist_for_each_entry_rcu(bar, head, hlist_id) {
         if (bar->seid == seid && bar->id == bar_id)
             return bar;
@@ -68,7 +78,11 @@ void bar_update(struct bar *bar, struct gtp5g_dev *gtp)
     char seid_bar_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
 
     seid_bar_id_to_hex_str(bar->seid, bar->id, seid_bar_id_hexstr);
-    head = &gtp->related_bar_hash[str_hashfn(seid_bar_id_hexstr) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_bar_hash),
+            str_hashfn(seid_bar_id_hexstr));
+    if (!head)
+        return;
+
     hlist_for_each_entry_rcu(far, head, hlist_related_bar) {
         if (*far->bar_id == bar->id) {
             far->bar = bar;
@@ -79,11 +93,15 @@ void bar_update(struct bar *bar, struct gtp5g_dev *gtp)
 void bar_append(u64 seid, u32 bar_id, struct bar *bar, struct gtp5g_dev *gtp)
 {
     char seid_bar_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
-    u32 i;
+    struct hlist_head *head;
 
     seid_bar_id_to_hex_str(seid, bar_id, seid_bar_id_hexstr);
-    i = str_hashfn(seid_bar_id_hexstr) % gtp->hash_size;
-    hlist_add_head_rcu(&bar->hlist_id, &gtp->bar_id_hash[i]);
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->bar_id_hash),
+            str_hashfn(seid_bar_id_hexstr));
+    if (!head)
+        return;
+
+    hlist_add_head_rcu(&bar->hlist_id, head);
 }
 
 int bar_get_far_ids(u32 *ids, int n, struct bar *bar, struct gtp5g_dev *gtp)
@@ -94,7 +112,11 @@ int bar_get_far_ids(u32 *ids, int n, struct bar *bar, struct gtp5g_dev *gtp)
     int i;
 
     seid_bar_id_to_hex_str(bar->seid, bar->id, seid_bar_id_hexstr);
-    head = &gtp->related_bar_hash[str_hashfn(seid_bar_id_hexstr) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_bar_hash),
+            str_hashfn(seid_bar_id_hexstr));
+    if (!head)
+        return 0;
+
     i = 0;
     hlist_for_each_entry_rcu(far, head, hlist_related_bar) {
         if (i >= n)
@@ -108,12 +130,16 @@ int bar_get_far_ids(u32 *ids, int n, struct bar *bar, struct gtp5g_dev *gtp)
 void bar_set_far(u64 seid, u32 bar_id, struct hlist_node *node, struct gtp5g_dev *gtp)
 {
     char seid_bar_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
-    u32 i;
+    struct hlist_head *head;
 
     if (!hlist_unhashed(node))
         hlist_del_rcu(node);
 
     seid_bar_id_to_hex_str(seid, bar_id, seid_bar_id_hexstr);
-    i = str_hashfn(seid_bar_id_hexstr) % gtp->hash_size;
-    hlist_add_head_rcu(node, &gtp->related_bar_hash[i]);
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_bar_hash),
+            str_hashfn(seid_bar_id_hexstr));
+    if (!head)
+        return;
+
+    hlist_add_head_rcu(node, head);
 }

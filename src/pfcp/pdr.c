@@ -161,11 +161,19 @@ int unix_sock_client_update(struct pdr *pdr, struct far *far)
 struct pdr *find_pdr_by_id(struct gtp5g_dev *gtp, u64 seid, u16 pdr_id)
 {
     struct hlist_head *head;
+    struct hlist_head *pdr_id_hash;
     struct pdr *pdr;
     char seid_pdr_id[SEID_U32ID_HEX_STR_LEN] = {0};
 
+    if (!gtp)
+        return NULL;
+
+    pdr_id_hash = READ_ONCE(gtp->pdr_id_hash);
     seid_pdr_id_to_hex_str(seid, pdr_id, seid_pdr_id);
-    head = &gtp->pdr_id_hash[str_hashfn(seid_pdr_id) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, pdr_id_hash, str_hashfn(seid_pdr_id));
+    if (!head)
+        return NULL;
+
     hlist_for_each_entry_rcu(pdr, head, hlist_id) {
         if (pdr->seid == seid && pdr->id == pdr_id)
             return pdr;
@@ -281,13 +289,15 @@ struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff *skb,
 #endif
     struct iphdr *iph;
     struct hlist_head *head;
+    struct hlist_head *i_teid_hash;
     struct pdr *pdr;
     struct pdi *pdi;
 
-    if (!gtp) {
+    if (!gtp || !skb) {
         return NULL;
     }
 
+    i_teid_hash = READ_ONCE(gtp->i_teid_hash);
     if (ntohs(skb->protocol) != ETH_P_IP) {
         return NULL;
     }
@@ -298,7 +308,10 @@ struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff *skb,
         }
     }
 
-    head = &gtp->i_teid_hash[u32_hashfn(teid) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, i_teid_hash, u32_hashfn(teid));
+    if (!head)
+        return NULL;
+
     hlist_for_each_entry_rcu(pdr, head, hlist_i_teid) {
         pdi = pdr->pdi;
         if (!pdi) {
@@ -353,13 +366,22 @@ struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *gtp, struct sk_buff *skb,
         unsigned int hdrlen, __be32 addr)
 {
     struct hlist_head *head;
+    struct hlist_head *addr_hash;
     struct pdr *pdr;
     struct pdi *pdi;
 
-    head = &gtp->addr_hash[ipv4_hashfn(addr) % gtp->hash_size];
+    if (!gtp)
+        return NULL;
+
+    addr_hash = READ_ONCE(gtp->addr_hash);
+    head = gtp5g_hash_get(gtp, addr_hash, ipv4_hashfn(addr));
+    if (!head)
+        return NULL;
 
     hlist_for_each_entry_rcu(pdr, head, hlist_addr) {
         pdi = pdr->pdi;
+        if (!pdi || !pdi->ue_addr_ipv4)
+            continue;
 
         // TODO: Move the value we check into first level
         if (!(pdr->af == AF_INET && pdi->ue_addr_ipv4->s_addr == addr))
@@ -377,12 +399,16 @@ struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *gtp, struct sk_buff *skb,
 
 void pdr_append(u64 seid, u16 pdr_id, struct pdr *pdr, struct gtp5g_dev *gtp)
 {
-    u32 i;
+    struct hlist_head *head;
     char seid_pdr_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
 
     seid_pdr_id_to_hex_str(seid, pdr_id, seid_pdr_id_hexstr);
-    i = str_hashfn(seid_pdr_id_hexstr) % gtp->hash_size;
-    hlist_add_head_rcu(&pdr->hlist_id, &gtp->pdr_id_hash[i]);
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->pdr_id_hash),
+            str_hashfn(seid_pdr_id_hexstr));
+    if (!head)
+        return;
+
+    hlist_add_head_rcu(&pdr->hlist_id, head);
 }
 
 void pdr_update_hlist_table(struct pdr *pdr, struct gtp5g_dev *gtp)
@@ -406,7 +432,11 @@ void pdr_update_hlist_table(struct pdr *pdr, struct gtp5g_dev *gtp)
     f_teid = pdi->f_teid;
     if (f_teid) {
         last_ppdr = NULL;
-        head = &gtp->i_teid_hash[u32_hashfn(f_teid->teid) % gtp->hash_size];
+        head = gtp5g_hash_get(gtp, READ_ONCE(gtp->i_teid_hash),
+                u32_hashfn(f_teid->teid));
+        if (!head)
+            return;
+
         hlist_for_each_entry_rcu(ppdr, head, hlist_i_teid) {
             if (pdr->precedence > ppdr->precedence)
                 last_ppdr = ppdr;
@@ -419,7 +449,11 @@ void pdr_update_hlist_table(struct pdr *pdr, struct gtp5g_dev *gtp)
             hlist_add_behind_rcu(&pdr->hlist_i_teid, &last_ppdr->hlist_i_teid);
     } else if (pdi->ue_addr_ipv4) {
         last_ppdr = NULL;
-        head = &gtp->addr_hash[u32_hashfn(pdi->ue_addr_ipv4->s_addr) % gtp->hash_size];
+        head = gtp5g_hash_get(gtp, READ_ONCE(gtp->addr_hash),
+                u32_hashfn(pdi->ue_addr_ipv4->s_addr));
+        if (!head)
+            return;
+
         hlist_for_each_entry_rcu(ppdr, head, hlist_addr) {
             if (pdr->precedence > ppdr->precedence)
                 last_ppdr = ppdr;

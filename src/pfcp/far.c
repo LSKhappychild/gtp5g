@@ -56,12 +56,15 @@ void far_context_delete(struct far *far)
         hlist_del_rcu(&far->hlist_id);
 
     seid_far_id_to_hex_str(far->seid, far->id, seid_far_id_hexstr);
-    head = &gtp->related_far_hash[str_hashfn(seid_far_id_hexstr) % gtp->hash_size];
-    hlist_for_each_entry_rcu(pdr_node, head, hlist) {
-        if (pdr_node->pdr->seid == far->seid &&
-            *pdr_node->pdr->far_id == far->id) {
-            rcu_assign_pointer(pdr_node->pdr->far, NULL);
-            unix_sock_client_delete(pdr_node->pdr);
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_far_hash),
+            str_hashfn(seid_far_id_hexstr));
+    if (head) {
+        hlist_for_each_entry_rcu(pdr_node, head, hlist) {
+            if (pdr_node->pdr->seid == far->seid &&
+                *pdr_node->pdr->far_id == far->id) {
+                rcu_assign_pointer(pdr_node->pdr->far, NULL);
+                unix_sock_client_delete(pdr_node->pdr);
+            }
         }
     }
 
@@ -74,8 +77,15 @@ struct far *find_far_by_id(struct gtp5g_dev *gtp, u64 seid, u32 far_id)
     struct far *far;
     char seid_far_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
 
+    if (!gtp)
+        return NULL;
+
     seid_far_id_to_hex_str(seid, far_id, seid_far_id_hexstr);
-    head = &gtp->far_id_hash[str_hashfn(seid_far_id_hexstr) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->far_id_hash),
+            str_hashfn(seid_far_id_hexstr));
+    if (!head)
+        return NULL;
+
     hlist_for_each_entry_rcu(far, head, hlist_id) {
         if (far->seid == seid && far->id == far_id)
             return far;
@@ -92,7 +102,11 @@ void far_update(struct far *far, struct gtp5g_dev *gtp, u8 *flag,
     char seid_far_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
 
     seid_far_id_to_hex_str(far->seid, far->id, seid_far_id_hexstr);
-    head = &gtp->related_far_hash[str_hashfn(seid_far_id_hexstr) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_far_hash),
+            str_hashfn(seid_far_id_hexstr));
+    if (!head)
+        return;
+
     hlist_for_each_entry_rcu(pdr_node, head, hlist) {
         if (pdr_node->pdr->seid == far->seid &&
             *pdr_node->pdr->far_id == far->id) {
@@ -109,11 +123,15 @@ void far_update(struct far *far, struct gtp5g_dev *gtp, u8 *flag,
 void far_append(u64 seid, u32 far_id, struct far *far, struct gtp5g_dev *gtp)
 {
     char seid_far_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
-    u32 i;
+    struct hlist_head *head;
 
     seid_far_id_to_hex_str(seid, far_id, seid_far_id_hexstr);
-    i = str_hashfn(seid_far_id_hexstr) % gtp->hash_size;
-    hlist_add_head_rcu(&far->hlist_id, &gtp->far_id_hash[i]);
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->far_id_hash),
+            str_hashfn(seid_far_id_hexstr));
+    if (!head)
+        return;
+
+    hlist_add_head_rcu(&far->hlist_id, head);
 }
 
 int far_get_pdr_ids(u16 *ids, int n, struct far *far, struct gtp5g_dev *gtp)
@@ -124,7 +142,11 @@ int far_get_pdr_ids(u16 *ids, int n, struct far *far, struct gtp5g_dev *gtp)
     int i;
 
     seid_far_id_to_hex_str(far->seid, far->id, seid_far_id_hexstr);
-    head = &gtp->related_far_hash[str_hashfn(seid_far_id_hexstr) % gtp->hash_size];
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_far_hash),
+            str_hashfn(seid_far_id_hexstr));
+    if (!head)
+        return 0;
+
     i = 0;
     hlist_for_each_entry_rcu(pdr_node, head, hlist) {
         if (i >= n)
@@ -138,14 +160,21 @@ int far_get_pdr_ids(u16 *ids, int n, struct far *far, struct gtp5g_dev *gtp)
 
 void del_related_far_hash(struct gtp5g_dev *gtp, struct pdr *pdr)
 {
-    u32 i;
+    struct hlist_head *head;
     struct pdr_node *pdr_node = NULL ;
     struct pdr_node *to_be_del = NULL ;
     char seid_far_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
 
+    if (!pdr || !pdr->far_id)
+        return;
+
     seid_far_id_to_hex_str(pdr->seid, *pdr->far_id, seid_far_id_hexstr);
-    i = str_hashfn(seid_far_id_hexstr) % gtp->hash_size;
-    hlist_for_each_entry_rcu(pdr_node, &gtp->related_far_hash[i], hlist) {
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_far_hash),
+            str_hashfn(seid_far_id_hexstr));
+    if (!head)
+        return;
+
+    hlist_for_each_entry_rcu(pdr_node, head, hlist) {
         if (pdr_node->pdr != NULL &&
             pdr_node->pdr->seid == pdr->seid &&
             pdr_node->pdr->id == pdr->id) {
@@ -163,22 +192,25 @@ int far_set_pdr(struct pdr *pdr, struct gtp5g_dev *gtp)
 {
     char seid_far_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
     struct pdr_node *pdr_node = NULL;
-    u32 i;
+    struct hlist_head *head;
 
-    if (!pdr)
+    if (!pdr || !pdr->far_id)
         return -1;
 
     del_related_far_hash(gtp, pdr);
 
     seid_far_id_to_hex_str(pdr->seid, *pdr->far_id, seid_far_id_hexstr);
-    i = str_hashfn(seid_far_id_hexstr) % gtp->hash_size;
+    head = gtp5g_hash_get(gtp, READ_ONCE(gtp->related_far_hash),
+            str_hashfn(seid_far_id_hexstr));
+    if (!head)
+        return -ENODEV;
 
     pdr_node = kzalloc(sizeof(*pdr_node), GFP_ATOMIC);
     if (!pdr_node) {
         return -ENOMEM;
     }
     pdr_node->pdr = pdr;
-    hlist_add_head_rcu(&pdr_node->hlist, &gtp->related_far_hash[i]);
+    hlist_add_head_rcu(&pdr_node->hlist, head);
 
     return 0;
 }

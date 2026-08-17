@@ -247,6 +247,8 @@ int gtp5g_genl_dump_bar(struct sk_buff *skb, struct netlink_callback *cb)
     int ret;
     u8 bar_id = cb->args[2];
     struct bar *bar;
+    unsigned int hash_size;
+    struct hlist_head *bar_id_hash;
 
     if (cb->args[5])
         return 0;
@@ -257,8 +259,13 @@ int gtp5g_genl_dump_bar(struct sk_buff *skb, struct netlink_callback *cb)
         else
             last_gtp = NULL;
 
-        for (i = last_hash_entry_id; i < gtp->hash_size; i++) {
-            hlist_for_each_entry_rcu(bar, &gtp->bar_id_hash[i], hlist_id) {
+        hash_size = READ_ONCE(gtp->hash_size);
+        bar_id_hash = READ_ONCE(gtp->bar_id_hash);
+        if (!hash_size || !bar_id_hash || last_hash_entry_id >= hash_size)
+            continue;
+
+        for (i = last_hash_entry_id; i < hash_size; i++) {
+            hlist_for_each_entry_rcu(bar, &bar_id_hash[i], hlist_id) {
                 if (bar_id && bar_id != bar->id)
                     continue;
                 bar_id = 0;
